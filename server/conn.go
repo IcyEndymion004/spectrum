@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,7 +14,6 @@ import (
 
 	"github.com/cooldogedev/spectrum/protocol"
 	spectrumpacket "github.com/cooldogedev/spectrum/server/packet"
-	"github.com/golang/snappy"
 	"github.com/sandertv/gophertunnel/minecraft"
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 )
@@ -155,12 +155,20 @@ func (c *Conn) WritePacket(pk packet.Packet) error {
 		return err
 	}
 	pk.Marshal(c.protocol.NewWriter(buf, c.shieldID))
-	return c.writer.Write(snappy.Encode(nil, buf.Bytes()))
+	compressed, err := gzipCompress(buf.Bytes())
+	if err != nil {
+		return err
+	}
+	return c.writer.Write(compressed)
 }
 
 // Write writes provided byte slice to the underlying connection.
 func (c *Conn) Write(p []byte) error {
-	return c.writer.Write(snappy.Encode(nil, p))
+	compressed, err := gzipCompress(p)
+	if err != nil {
+		return err
+	}
+	return c.writer.Write(compressed)
 }
 
 // DoConnect sends a ConnectionRequest packet to initiate the connection sequence.
@@ -278,7 +286,7 @@ func (c *Conn) read() (pk any, err error) {
 		return nil, fmt.Errorf("unknown decode byte marker %v", payload[0])
 	}
 
-	decompressed, err := snappy.Decode(nil, payload[1:])
+	decompressed, err := gzipDecompress(payload[1:])
 	if err != nil {
 		return nil, err
 	}
@@ -416,6 +424,7 @@ func (c *Conn) handleStartGame(pk *packet.StartGame) error {
 // handleItemRegistry handles the ItemRegistry packet.
 func (c *Conn) handleItemRegistry(pk *packet.ItemRegistry) error {
 	c.logger.Debug("received item_registry, expecting chunk_radius_updated")
+	c.deferPacket(pk)
 	c.expect(packet.IDChunkRadiusUpdated)
 	c.gameData.Items = pk.Items
 	for _, item := range pk.Items {
@@ -450,4 +459,25 @@ func (c *Conn) handlePlayStatus(pk *packet.PlayStatus) error {
 		c.onConnect(nil)
 	}
 	return nil
+}
+
+func gzipCompress(data []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	w := gzip.NewWriter(&buf)
+	if _, err := w.Write(data); err != nil {
+		return nil, err
+	}
+	if err := w.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func gzipDecompress(data []byte) ([]byte, error) {
+	r, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	return io.ReadAll(r)
 }
