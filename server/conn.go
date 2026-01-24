@@ -2,11 +2,11 @@ package server
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/klauspost/compress/zlib"
 	"io"
 	"log/slog"
 	"slices"
@@ -463,26 +463,21 @@ func (c *Conn) handlePlayStatus(pk *packet.PlayStatus) error {
 
 func compress(data []byte) ([]byte, error) {
 	var buf bytes.Buffer
-
-	w, err := zlib.NewWriterLevel(&buf, 6)
-	if err != nil {
-		return nil, err
-	}
-
+	w := gzip.NewWriter(&buf)
 	if _, err := w.Write(data); err != nil {
 		return nil, err
 	}
-	w.Close()
-
+	if err := w.Close(); err != nil {
+		return nil, err
+	}
 	return buf.Bytes(), nil
 }
 
 func decompress(data []byte) ([]byte, error) {
-	r, err := zlib.NewReader(bytes.NewReader(data))
+	r, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}
 	defer r.Close()
-
 	return io.ReadAll(r)
 }
