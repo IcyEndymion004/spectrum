@@ -2,11 +2,11 @@ package server
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/klauspost/compress/zlib"
 	"io"
 	"log/slog"
 	"slices"
@@ -155,7 +155,7 @@ func (c *Conn) WritePacket(pk packet.Packet) error {
 		return err
 	}
 	pk.Marshal(c.protocol.NewWriter(buf, c.shieldID))
-	compressed, err := gzipCompress(buf.Bytes())
+	compressed, err := compress(buf.Bytes())
 	if err != nil {
 		return err
 	}
@@ -164,7 +164,7 @@ func (c *Conn) WritePacket(pk packet.Packet) error {
 
 // Write writes provided byte slice to the underlying connection.
 func (c *Conn) Write(p []byte) error {
-	compressed, err := gzipCompress(p)
+	compressed, err := compress(p)
 	if err != nil {
 		return err
 	}
@@ -286,7 +286,7 @@ func (c *Conn) read() (pk any, err error) {
 		return nil, fmt.Errorf("unknown decode byte marker %v", payload[0])
 	}
 
-	decompressed, err := gzipDecompress(payload[1:])
+	decompressed, err := decompress(payload[1:])
 	if err != nil {
 		return nil, err
 	}
@@ -461,23 +461,28 @@ func (c *Conn) handlePlayStatus(pk *packet.PlayStatus) error {
 	return nil
 }
 
-func gzipCompress(data []byte) ([]byte, error) {
+func compress(data []byte) ([]byte, error) {
 	var buf bytes.Buffer
-	w := gzip.NewWriter(&buf)
+
+	w, err := zlib.NewWriterLevel(&buf, 6)
+	if err != nil {
+		return nil, err
+	}
+
 	if _, err := w.Write(data); err != nil {
 		return nil, err
 	}
-	if err := w.Close(); err != nil {
-		return nil, err
-	}
+	w.Close()
+
 	return buf.Bytes(), nil
 }
 
-func gzipDecompress(data []byte) ([]byte, error) {
-	r, err := gzip.NewReader(bytes.NewReader(data))
+func decompress(data []byte) ([]byte, error) {
+	r, err := zlib.NewReader(bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}
 	defer r.Close()
+
 	return io.ReadAll(r)
 }
